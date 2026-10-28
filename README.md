@@ -1,4 +1,4 @@
-# dsh-voice-stream 喵 ♪(´▽｀)
+# dsh-voice-stream 
 
 咱做了个语音输入插件，说话的时候字会一个一个冒出来，像自己在打字一样喵～
 
