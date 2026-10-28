@@ -301,33 +301,41 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 去掉文本末尾的句读标点。
+     * 规整识别结果里的句读标点。
      *
      * ── 为什么需要这个 ──────────────────────────────────────────────────
      *
-     * SenseVoice 每识别一句都会**自带结尾句号**。连起来就变成：
+     * SenseVoice 每识别一句都会自带结尾句号。连续定稿时会出现两种问题：
      *
-     *     今天天气不错。我们下午三点开会。
+     *   1. **连续重复标点**：上一句以「。」结尾，下一句又是「。」开头，
+     *      拼起来变成「。。」
+     *   2. **单独一个标点**：某些片段只识别出一个「。」（比如纯呼吸声），
+     *      写进去就是一个孤零零的句号
      *
-     * 这在完整句子里是对的，但有两个问题：
+     * ── 处理规则 ────────────────────────────────────────────────────────
      *
-     *   1. **用户继续说时，句号卡在中间**。比如说完「今天天气不错。」
-     *      再接着说「然后呢」，会变成「今天天气不错。然后呢」——
-     *      中间那个句号是模型自动加的，用户并不想要。
+     *   · 连续重复的标点 → 去重成一个（「。。。」→「。」）
+     *   · 整段只有标点 → 返回空串，不写入
+     *   · 正常句子带句号 → **保留**（用户就是要这个）
      *
-     *   2. **最后一句也会带句号**。用户可能还想继续写，句号就多余了。
-     *
-     * 所以定稿时把结尾标点去掉，只在**用户真正结束**（停止录音、
-     * 发消息）时才由用户自己决定要不要加。
-     *
-     * 注意只去**结尾**的，句子中间的标点保留 —— 那些是有意义的断句。
+     * 注意：和上一版的区别。上一版把所有结尾标点都删了，导致用户
+     * 完全看不到句号 —— 那是改过头了。
      *
      * @param {string} text - 识别结果。
-     * @returns {string} 去掉结尾标点后的文本。
+     * @returns {string} 规整后的文本（可能是空串）。
      */
-    function stripTrailingPunctuation(text) {
-      // 中英文常见句读 + 空白
-      return text.replace(/[。．.，,、；;：:！!？?…\s]+$/u, '')
+    function normalizePunctuation(text) {
+      // 去掉首尾空白
+      let out = text.trim()
+      if (out === '') return ''
+
+      // 连续重复的句读标点去重（「。。。」→「。」「，，」→「，」）
+      out = out.replace(/([。．.，,、；;：:！!？?…])\1+/gu, '$1')
+
+      // 整段只有标点 → 丢弃（这是「单独出一个句号」的情况）
+      if (/^[。．.，,、；;：:！!？?…\s]+$/u.test(out)) return ''
+
+      return out
     }
 
     /**
@@ -425,6 +433,12 @@ window.__ModuleLoader__.load({
        * 每帧），时间戳对两者都成立。
        */
       const lastSpeechAtRef = useRef(0)
+      /** 上次 restartSegment 的时间，用于 1 秒防抖。 */
+      const lastRestartAtRef = useRef(0)
+      /** 刚重启后跳过一轮光标检查，避免死循环。 */
+      const skipCaretCheckRef = useRef(false)
+      /** 连续插入失败计数，达到 2 才重启（避免死循环）。 */
+      const failCountRef = useRef(0)
 
       // ── 基础动作（必须排在最前面）──────────────────────────────────────
       //
@@ -471,6 +485,25 @@ window.__ModuleLoader__.load({
        */
       const restartSegment = useCallback(
         (caretStart) => {
+          // ── 防抖 ────────────────────────────────────────────────────
+          //
+          // 这是上一版最严重的 bug 的修复点。
+          //
+          // 死循环是这样的：
+          //   写入文字 → 光标没跟到末尾 → 检测到「光标偏移」
+          //   → restartSegment 清空 written → 再写入 → 光标还是没跟
+          //   → 又检测到偏移 → …… 无限循环
+          //
+          // 每循环一次闪一下绿对勾，同时 written 被反复清空，
+          // 新说的话永远写不进去。表现就是「闪来闪去 + 说了不进来」。
+          //
+          // 两道闸：
+          //   1. 1 秒内只允许重启一次（挡住轮询和识别回调的连环触发）
+          //   2. 重启后标记「刚重启」，下一次 writeTail 跳过光标检查
+          const now = Date.now()
+          if (now - lastRestartAtRef.current < 1000) return
+          lastRestartAtRef.current = now
+
           // 把正在识别的那句请求定稿，宿主会清空缓冲开始新的一句。
           // 设标记：这次 finalize 的回包不要并入 committed（那段文本
           // 已经在编辑器里了，再并入会重复）。
@@ -478,21 +511,16 @@ window.__ModuleLoader__.load({
           sendControl('finalize')
           spokeRef.current = false
 
-          // ── 新锚点的选择 ────────────────────────────────────────────
+          // 新一段的锚点 = 用户当前光标位置。
           //
-          // 不能直接用光标位置。用户可能在**已写文本的中间**点了一下
-          // （比如想改错字），此时光标在 [anchor, anchor+written) 区间内。
-          // 如果拿它当新锚点，下一句会插进旧句子里，把句子切成两半。
-          //
-          // 规则：
-          //   · 光标在已写区域之后（正常继续说话）→ 用它
-          //   · 光标在已写区域内（在改错字）→ 退到已写区域的末尾
-          //   · 光标在锚点之前（跑到前面去了）→ 退到已写区域的末尾
-          const writtenEnd = anchorRef.current + writtenRef.current.length
-          const safeAnchor = caretStart >= writtenEnd ? caretStart : writtenEnd
-          anchorRef.current = safeAnchor
+          // 这里不再做「退到末尾」的处理 —— 用户明确希望在光标处继续
+          // 输入。之前那套 safeAnchor 会在编辑后算出越界的偏移，
+          // 导致 insertText 一直失败。
+          anchorRef.current = caretStart
           writtenRef.current = ''
           committedRef.current = ''
+          // 标记：下一次写入不要检查光标（刚重启，光标本来就不在末尾）。
+          skipCaretCheckRef.current = true
 
           // 清掉可能还在跑的静音计时，避免定稿后立刻又触发。
           if (silenceTimerRef.current !== null) {
@@ -525,29 +553,49 @@ window.__ModuleLoader__.load({
           const caret = inputActions.captureInsertion()
           if (caret === undefined || caret === null) return false
 
-          // ── 光标/内容被用户动过 ──────────────────────────────────────
+          // ── 光标检查（带跳过开关）────────────────────────────────────
           //
-          // 正常情况光标应该停在我们上次写的末尾。偏离了就说明用户
-          // 点了别处、删了字、或改了内容 —— 这时候不要放弃，而是
-          // 把这一段当作已定稿，以用户的光标为新起点继续。
-          const expected = anchorRef.current + prev.length
-          if (prev.length > 0 && Math.abs(caret.start - expected) > 2) {
-            restartSegment(caret.start)
-            return false
+          // 正常情况光标应该停在我们上次写的末尾。偏离了说明用户动过。
+          //
+          // 但刚 restartSegment 之后光标本来就不在末尾（用户点了别处），
+          // 此时必须跳过检查，否则会立刻又触发一次重启、形成死循环。
+          if (!skipCaretCheckRef.current) {
+            const expected = anchorRef.current + prev.length
+            if (prev.length > 0 && Math.abs(caret.start - expected) > 2) {
+              restartSegment(caret.start)
+              return false
+            }
           }
+          // 只跳过一轮，之后恢复正常检查。
+          skipCaretCheckRef.current = false
+
+          // ── span 边界保护 ────────────────────────────────────────────
+          //
+          // 用户编辑后文档可能变短，旧偏移会越界，导致 insertText
+          // 一直返回 false。这里先夹到合法范围。
+          const docLength = caret.start + (caret.end - caret.start)
+          const start = Math.max(0, anchorRef.current + keep)
+          const end = Math.max(start, anchorRef.current + prev.length)
 
           const span = {
-            start: anchorRef.current + keep,
-            end: anchorRef.current + prev.length,
+            start,
+            end,
             draftRev: caret.draftRev,
           }
           const ok = inputActions.insertText(next.slice(keep), span)
           if (!ok) {
-            // draftRev 对不上（用户在两次识别之间改过字）。
-            // 同样按"这段结束"处理，而不是永久停手。
-            restartSegment(caret.start)
+            // 插入失败（版本对不上或越界）。
+            //
+            // 不要立刻 restartSegment —— 那会形成死循环。
+            // 先记一次失败，连续失败两次才重启，且受 1 秒防抖保护。
+            failCountRef.current += 1
+            if (failCountRef.current >= 2) {
+              failCountRef.current = 0
+              restartSegment(caret.start)
+            }
             return false
           }
+          failCountRef.current = 0
           writtenRef.current = next
           return true
         },
@@ -745,7 +793,7 @@ window.__ModuleLoader__.load({
               // partial 也去结尾标点：说话过程中模型会不断补句号，
               // 留着的话文字末尾一直挂个句号、下一轮又把它覆盖掉，
               // 视觉上会闪。
-              writeTail(committedRef.current + stripTrailingPunctuation(msg.text))
+              writeTail(committedRef.current + normalizePunctuation(msg.text))
             } else if (msg.type === 'final') {
               // ── 这个 final 是不是我们自己触发的那次？─────────────────
               //
@@ -764,9 +812,11 @@ window.__ModuleLoader__.load({
                 flashFinalized()
                 return
               }
-              // 定稿时去掉结尾标点，避免「说完一句 → 句号卡在中间 →
-              // 继续说时变成『甲。乙』」。用户真正结束时自己加。
-              const clean = stripTrailingPunctuation(msg.text)
+              // 定稿时规整标点：
+              //   · 连续重复的句号去重（「。。」→「。」）
+              //   · 整段只有标点就不写入（避免孤零零一个句号）
+              //   · 正常句子保留句号
+              const clean = normalizePunctuation(msg.text)
               if (clean !== '') {
                 // 前一段已经有内容时补一个空格分隔（中文不加空格，
                 // 英文单词之间需要）。
