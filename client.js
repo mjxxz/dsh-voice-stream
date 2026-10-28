@@ -301,6 +301,36 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 去掉文本末尾的句读标点。
+     *
+     * ── 为什么需要这个 ──────────────────────────────────────────────────
+     *
+     * SenseVoice 每识别一句都会**自带结尾句号**。连起来就变成：
+     *
+     *     今天天气不错。我们下午三点开会。
+     *
+     * 这在完整句子里是对的，但有两个问题：
+     *
+     *   1. **用户继续说时，句号卡在中间**。比如说完「今天天气不错。」
+     *      再接着说「然后呢」，会变成「今天天气不错。然后呢」——
+     *      中间那个句号是模型自动加的，用户并不想要。
+     *
+     *   2. **最后一句也会带句号**。用户可能还想继续写，句号就多余了。
+     *
+     * 所以定稿时把结尾标点去掉，只在**用户真正结束**（停止录音、
+     * 发消息）时才由用户自己决定要不要加。
+     *
+     * 注意只去**结尾**的，句子中间的标点保留 —— 那些是有意义的断句。
+     *
+     * @param {string} text - 识别结果。
+     * @returns {string} 去掉结尾标点后的文本。
+     */
+    function stripTrailingPunctuation(text) {
+      // 中英文常见句读 + 空白
+      return text.replace(/[。．.，,、；;：:！!？?…\s]+$/u, '')
+    }
+
+    /**
      * 线性插值重采样到 16kHz。
      * @param {Float32Array} input - 原始样本。
      * @param {number} fromRate - 原采样率。
@@ -448,8 +478,19 @@ window.__ModuleLoader__.load({
           sendControl('finalize')
           spokeRef.current = false
 
-          // 新一段的锚点 = 用户当前光标位置。
-          anchorRef.current = caretStart
+          // ── 新锚点的选择 ────────────────────────────────────────────
+          //
+          // 不能直接用光标位置。用户可能在**已写文本的中间**点了一下
+          // （比如想改错字），此时光标在 [anchor, anchor+written) 区间内。
+          // 如果拿它当新锚点，下一句会插进旧句子里，把句子切成两半。
+          //
+          // 规则：
+          //   · 光标在已写区域之后（正常继续说话）→ 用它
+          //   · 光标在已写区域内（在改错字）→ 退到已写区域的末尾
+          //   · 光标在锚点之前（跑到前面去了）→ 退到已写区域的末尾
+          const writtenEnd = anchorRef.current + writtenRef.current.length
+          const safeAnchor = caretStart >= writtenEnd ? caretStart : writtenEnd
+          anchorRef.current = safeAnchor
           writtenRef.current = ''
           committedRef.current = ''
 
@@ -513,19 +554,19 @@ window.__ModuleLoader__.load({
         [inputActions, restartSegment],
       )
 
-      /** 释放资源。 */
-      const teardown = useCallback(() => {
+      /**
+       * 只停止音频采集，保留 WebSocket 连接。
+       *
+       * 手动停止时用：先把麦克风关掉（用户立刻看到灯灭），
+       * 但连接要留着等宿主的 final 回包。
+       *
+       * 和 teardown 的区别：teardown 连 WebSocket 一起拆。
+       */
+      const stopCapture = useCallback(() => {
         activeRef.current = false
         activeSessions.current = 0
         liveAmplitude.current = () => 0
-        // 重置「跳过下一个 final」标记。
-        //
-        // 这个标记在改字/停止时会置 true，等宿主的 final 回来才清。
-        // 但如果 final 丢了（连接断了、宿主崩了），标记会永久为 true，
-        // 导致下一次静音定稿的 final 被错误吞掉、那句文字丢失。
-        // 所以每次拆连接时都清掉。
-        skipNextFinalRef.current = false
-        for (const ref of [silenceTimerRef, flashTimerRef, watchTimerRef, stopTimerRef]) {
+        for (const ref of [silenceTimerRef, watchTimerRef]) {
           if (ref.current !== null) {
             clearTimeout(ref.current)
             ref.current = null
@@ -556,6 +597,28 @@ window.__ModuleLoader__.load({
           for (const track of stream.getTracks()) track.stop()
           streamRef.current = null
         }
+      }, [])
+
+      /** 释放资源。 */
+      const teardown = useCallback(() => {
+        activeRef.current = false
+        activeSessions.current = 0
+        liveAmplitude.current = () => 0
+        // 重置「跳过下一个 final」标记。
+        //
+        // 这个标记在改字时会置 true，等宿主的 final 回来才清。
+        // 但如果 final 丢了（连接断了、宿主崩了），标记会永久为 true，
+        // 导致下一次静音定稿的 final 被错误吞掉、那句文字丢失。
+        // 所以每次拆连接时都清掉。
+        skipNextFinalRef.current = false
+        for (const ref of [silenceTimerRef, flashTimerRef, watchTimerRef, stopTimerRef]) {
+          if (ref.current !== null) {
+            clearTimeout(ref.current)
+            ref.current = null
+          }
+        }
+        // 复用 stopCapture 关掉采集，再拆 WebSocket。
+        stopCapture()
         const ws = wsRef.current
         if (ws !== null) {
           try {
@@ -566,7 +629,7 @@ window.__ModuleLoader__.load({
           }
           wsRef.current = null
         }
-      }, [])
+      }, [stopCapture])
 
       useEffect(() => () => teardown(), [teardown])
 
@@ -679,7 +742,10 @@ window.__ModuleLoader__.load({
               return
             }
             if (msg.type === 'partial') {
-              writeTail(committedRef.current + msg.text)
+              // partial 也去结尾标点：说话过程中模型会不断补句号，
+              // 留着的话文字末尾一直挂个句号、下一轮又把它覆盖掉，
+              // 视觉上会闪。
+              writeTail(committedRef.current + stripTrailingPunctuation(msg.text))
             } else if (msg.type === 'final') {
               // ── 这个 final 是不是我们自己触发的那次？─────────────────
               //
@@ -688,7 +754,7 @@ window.__ModuleLoader__.load({
               // 清空、锚点移到新位置了。如果直接 +=，上一段的文本会被
               // 追加到新一段里，表现为「改完字后出现重复文字」。
               //
-              // 用 awaitingFinalize 标记：只有客户端主动要定稿时才吞掉
+              // 用 skipNextFinalRef 标记：只有客户端主动要定稿时才吞掉
               // 这个 final（因为那段文本已经在编辑器里了）；静音定稿
               // 产生的 final 才需要并入 committed。
               if (skipNextFinalRef.current) {
@@ -698,7 +764,18 @@ window.__ModuleLoader__.load({
                 flashFinalized()
                 return
               }
-              committedRef.current += msg.text
+              // 定稿时去掉结尾标点，避免「说完一句 → 句号卡在中间 →
+              // 继续说时变成『甲。乙』」。用户真正结束时自己加。
+              const clean = stripTrailingPunctuation(msg.text)
+              if (clean !== '') {
+                // 前一段已经有内容时补一个空格分隔（中文不加空格，
+                // 英文单词之间需要）。
+                const needsSpace =
+                  committedRef.current !== '' &&
+                  !/[\u4e00-\u9fa5]$/u.test(committedRef.current) &&
+                  !/^[\u4e00-\u9fa5]/u.test(clean)
+                committedRef.current += (needsSpace ? ' ' : '') + clean
+              }
               writeTail(committedRef.current)
               spokeRef.current = false
               if (silenceTimerRef.current !== null) {
@@ -849,16 +926,36 @@ window.__ModuleLoader__.load({
       }, [autoStop, finalize, flashFinalized, inputActions, restartSegment, sendControl, shutdown, teardown, writeTail])
 
       const stop = useCallback(() => {
-        // stop 也会触发一次 final。这段文本已经在编辑器里了，
-        // 所以回包不要并入 committed（否则会重复）。
-        skipNextFinalRef.current = true
-        finalize()
+        // ── 为什么先切 UI 再收尾 ──────────────────────────────────────
+        //
+        // 上一版要等宿主的 final 回来才关按钮，而 final 要跑一次完整
+        // 识别（100-200ms）加网络往返，用户体感就是「点了没反应」。
+        //
+        // 现在改成：**立刻**切到「定稿中」状态、停掉麦克风；识别结果
+        // 回来后再补写文本。用户马上看到按钮变化，不会以为卡住了。
+        skipNextFinalRef.current = false
+        // 立刻停止采集（麦克风指示灯马上灭）。
+        stopCapture()
+        setState('finalized')
+        setMessage('')
+
+        // 通知宿主定稿；结果回来时走 ws.onmessage 的 final 分支。
+        sendControl('finalize')
+
         const ws = wsRef.current
         let settled = false
         const finish = () => {
           if (settled) return
           settled = true
-          shutdown()
+          // 保留已定稿的文本，只拆资源。
+          const keepAnchor = anchorRef.current
+          const keepWritten = writtenRef.current
+          const keepCommitted = committedRef.current
+          teardown()
+          anchorRef.current = keepAnchor
+          writtenRef.current = keepWritten
+          committedRef.current = keepCommitted
+          setState('idle')
         }
         if (ws !== null) {
           const prev = ws.onmessage
@@ -871,14 +968,13 @@ window.__ModuleLoader__.load({
             }
           }
         }
-        // 兜底定时器必须存进 ref，否则 teardown 清不掉：
-        // 用户如果在 2 秒内又点开始录音，这个旧定时器会把新会话关掉。
+        // 兜底：1 秒内没等到 final 也复位（比上一版的 2 秒更快）。
         if (stopTimerRef.current !== null) clearTimeout(stopTimerRef.current)
         stopTimerRef.current = setTimeout(() => {
           stopTimerRef.current = null
           finish()
-        }, 2000)
-      }, [finalize, shutdown])
+        }, 1000)
+      }, [sendControl, shutdown, teardown])
 
       const onClick = useCallback(() => {
         if (locked) return
