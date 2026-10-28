@@ -17,12 +17,12 @@
   "icon": "./icon.svg",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MJXXZ/dsh-voice-stream.git"
+    "url": "git+https://github.com/mjxxz/dsh-voice-stream.git"
   },
   "bugs": {
-    "url": "https://github.com/MJXXZ/dsh-voice-stream/issues"
+    "url": "https://github.com/mjxxz/dsh-voice-stream/issues"
   },
-  "homepage": "https://github.com/MJXXZ/dsh-voice-stream#readme",
+  "homepage": "https://github.com/mjxxz/dsh-voice-stream#readme",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",

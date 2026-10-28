@@ -66,11 +66,11 @@ DSH 自带的语音输入是「说完 → 按停止 → 等结果」那种喵，
 ### 装插件
 
 ```bash
-dsh plugin --profile web add github:MJXXZ/dsh-voice-stream
+dsh plugin --profile web add github:mjxxz/dsh-voice-stream
 ```
 
 > 插件管理页那个 npm 源选择器是给 npm 包用的喵，咱这个是 GitHub 仓库，
-> 直接在输入框里填 `github:MJXXZ/dsh-voice-stream` 就行啦 (๑˃̵ᴗ˂̵)
+> 直接在输入框里填 `github:mjxxz/dsh-voice-stream` 就行啦 (๑˃̵ᴗ˂̵)
 
 > 也支持本地目录安装喵：把仓库路径填进去就行～
 
