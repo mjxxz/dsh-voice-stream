@@ -1,0 +1,53 @@
+<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    dsh-voice-stream 图标：麦克风 + 声波。
+
+    设计说明：
+    - 36x36 与官方插件图标同规格，插件管理页按此尺寸渲染
+    - 麦克风主体居中，两侧弧形声波表示"正在收音"
+    - 渐变配色沿用官方语音插件的蓝系（#67C7FE → #3F77D8），
+      这样在插件列表里与其它语音类插件视觉上成一组
+  -->
+  <defs>
+    <linearGradient id="dvs-mic" x1="10" y1="8" x2="26" y2="30" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#67C7FE" />
+      <stop offset="1" stop-color="#3F77D8" />
+    </linearGradient>
+  </defs>
+
+  <!-- 麦克风头（圆角胶囊） -->
+  <rect x="14.5" y="6" width="7" height="13" rx="3.5" fill="url(#dvs-mic)" />
+
+  <!-- 麦克风支架弧 -->
+  <path
+    d="M11 16.5v1.5a7 7 0 0 0 14 0v-1.5"
+    stroke="url(#dvs-mic)"
+    stroke-width="2"
+    stroke-linecap="round"
+    fill="none"
+  />
+
+  <!-- 支架立柱与底座 -->
+  <path d="M18 25v4" stroke="url(#dvs-mic)" stroke-width="2" stroke-linecap="round" />
+  <path d="M14.5 30h7" stroke="url(#dvs-mic)" stroke-width="2" stroke-linecap="round" />
+
+  <!-- 左侧声波 -->
+  <path
+    d="M8.5 15.5a6 6 0 0 0 0 7"
+    stroke="url(#dvs-mic)"
+    stroke-width="1.8"
+    stroke-linecap="round"
+    fill="none"
+    opacity="0.55"
+  />
+
+  <!-- 右侧声波 -->
+  <path
+    d="M27.5 15.5a6 6 0 0 1 0 7"
+    stroke="url(#dvs-mic)"
+    stroke-width="1.8"
+    stroke-linecap="round"
+    fill="none"
+    opacity="0.55"
+  />
+</svg>

@@ -1,0 +1,62 @@
+# dsh-voice-stream —— 边说边出字的本地语音输入
+#
+# 这个文件是「bundle 补丁」：只把插件行插进加载器树，不实现功能。
+#
+# name 用**裸包名**而不是 './index.js'：
+# 从 npm / GitHub 安装时，包在 node_modules 里，裸包名能正常解析；
+# 相对路径只有本地目录挂载时才会被锚定成 file:// URL。
+# 裸包名两种安装方式都能用，所以统一用它。
+#
+# 改配置不要改这里：这里只是默认值。要覆盖请在
+#   $DSH_HOME/profiles/web/cordis.patch.yml
+# 里按 id 追加一行。注意补丁是**整体替换** config 而非深合并，
+# 所以覆盖时要把整个 config 写全。
+#
+# ── 模型 ────────────────────────────────────────────────────────────────
+#
+# 需要 SenseVoiceSmall 的 ONNX 模型。两个文件：
+#
+#   <modelDir>/
+#     ├── model.int8.onnx   228MB
+#     └── tokens.txt        0.3MB
+#
+# 下载（HuggingFace 或国内镜像二选一）：
+#
+#   https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17
+#   https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17
+#
+# 取该仓库固定 revision 下的 model.int8.onnx 与 tokens.txt，
+# 放到 modelDir 即可。默认路径复用官方语音输入插件的缓存目录，
+# 如果你装过官方 bundle，模型已经在那儿了。
+#
+# ── 与官方语音输入的关系 ────────────────────────────────────────────────
+#
+# 两者都挂 `conversation.input.activity`（single 槽位），**只能开一个**。
+# 用这个插件时请关掉官方语音输入，否则会互相覆盖。
+#
+- insert:
+    - id: voice-stream
+      name: dsh-voice-stream
+      config:
+        enabled: true
+        # 留空 = 自动查找模型。优先级：
+        #   1. 环境变量 DSH_VOICE_STREAM_MODEL
+        #   2. 当前实例的 $DSH_HOME/speech-to-text/sensevoice/models/sensevoice-onnx
+        #   3. ~/.dsh/speech-to-text/sensevoice/models/sensevoice-onnx（跨实例复用）
+        # 想钉死位置就填绝对路径，比如 'D:\models\sensevoice-onnx'
+        modelDir: ''
+        # auto / zh / en / yue / ja / ko
+        language: zh
+        threads: 4
+        # 长句的重解码间隔（毫秒）。短句会自动用更短的间隔，见 index.js。
+        stepMs: 800
+        finalizeSilenceMs: 1200
+        # 闲置多少毫秒没说话就自动收工（麦克风自动关、按钮复位）。
+        idleMs: 10000
+        maxSegmentSeconds: 30
+        # 定稿后排空在途音频的毫秒数，防止新句子粘上旧尾巴。
+        flushMs: 300
+        # 单帧字节上限，防止异常客户端把内存打爆。
+        maxFrameBytes: 1048576
+        # 空闲多少毫秒后释放模型（约 400MB）。0 = 永不释放。
+        idleTimeoutMs: 300000

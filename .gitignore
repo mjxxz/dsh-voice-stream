@@ -1,0 +1,28 @@
+# 依赖
+node_modules/
+.pnpm-store/
+
+# 构建产物（本插件不需要构建，但防止误提交）
+dist/
+lib/
+*.tsbuildinfo
+
+# 日志
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~
+
+# 临时文件 / 测试产物
+.tmp/
+.test/
+*.tgz
+*.wav
+*.mp3

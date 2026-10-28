@@ -1,0 +1,59 @@
+{
+  "name": "dsh-voice-stream",
+  "version": "0.1.0",
+  "description": "边说边出字的本地语音输入插件：SenseVoice 累积重解码，实时写入 DSH 输入框",
+  "type": "module",
+  "license": "Apache-2.0",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "speech-to-text",
+    "asr",
+    "sensevoice",
+    "voice-input",
+    "streaming-asr"
+  ],
+  "icon": "./icon.svg",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MJXXZ/dsh-voice-stream.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MJXXZ/dsh-voice-stream/issues"
+  },
+  "homepage": "https://github.com/MJXXZ/dsh-voice-stream#readme",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@deepseek-ai/schemastery": "~3.18.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+# 统一换行符：仓库里永远存 LF，checkout 时按平台转换
+#
+# 为什么需要这个：插件是纯 JS/JSON/YAML/SVG，不含 Windows 专有格式。
+# 如果直接提交 CRLF，Linux/macOS 用户 clone 下来会得到 CRLF 文件，
+# 某些工具（eslint、prettier、部分 YAML 解析器）会报错。
+* text=auto eol=lf
+
+# 明确文本类型
+*.js text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.svg text eol=lf
+
+# 二进制（防止 git 尝试转换）
+*.png binary
+*.jpg binary
+*.wav binary
+*.mp3 binary
+*.onnx binary
